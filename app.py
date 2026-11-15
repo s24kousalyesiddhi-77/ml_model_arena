@@ -2,65 +2,88 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.tree import DecisionTreeClassifier, plot_tree
-from sklearn.naive_bayes import GaussianNB
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
-from sklearn.neural_network import MLPClassifier
+from sklearn.tree import plot_tree
 from sklearn.cluster import KMeans
 from sklearn.inspection import permutation_importance
-from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score,
-                             roc_curve, roc_auc_score, silhouette_score)
+from sklearn.metrics import roc_curve, roc_auc_score, silhouette_score
+from engine import clean, train_all, make_pre, focus_column
 
-st.set_page_config(page_title="EduGuard", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="ML Model Arena", page_icon="🏟️", layout="wide")
+st.title("ML Model Arena 🏟️")
+st.caption("Upload any CSV, pick the column to predict, and let six models compete. "
+           "Then explore, explain and test what-if changes.")
 
 
 # =====================================================================
-# DATA
+# 1. DATA (any CSV, or a built-in demo)
 # =====================================================================
-st.title("EduGuard 🎓")
-st.caption("An ML arena that finds at-risk students early, and shows what can be done about it.")
+@st.cache_data(show_spinner=False)
+def load_demo(name):
+    if name.startswith("Students"):
+        return pd.read_csv("students.csv")
+    from sklearn import datasets
+    if name.startswith("Iris"):
+        d = datasets.load_iris(as_frame=True)
+        df = d.frame.drop(columns="target")
+        df["species"] = d.target.map(dict(enumerate(d.target_names)))
+        return df
+    d = datasets.load_breast_cancer(as_frame=True)
+    df = d.frame.drop(columns="target")
+    df["diagnosis"] = d.target.map({0: "malignant", 1: "benign"})
+    return df
 
-file = st.sidebar.file_uploader("Upload a CSV file", type="csv")
+
+@st.cache_data(show_spinner=False)
+def clean_cached(df, target):
+    return clean(df, target)
+
+
+file = st.sidebar.file_uploader("Upload your own CSV", type="csv")
+demo = st.sidebar.selectbox("...or try a demo dataset",
+                            ["Students (at-risk demo)", "Iris flowers (3 classes)",
+                             "Breast cancer (30 features)"])
 if file is not None:
-    df = pd.read_csv(file)
+    try:
+        raw = pd.read_csv(file)
+    except Exception as e:
+        st.error(f"Could not read this file as a CSV: {e}")
+        st.stop()
+    source = file.name
 else:
-    st.sidebar.info("No file uploaded, so using the sample data.")
-    df = pd.read_csv("students.csv")
+    raw = load_demo(demo)
+    source = demo
+st.sidebar.caption(f"Using: **{source}**")
 
-# ---- Data Doctor ----
-missing = int(df.isna().sum().sum())
-df = df.dropna().reset_index(drop=True)
-doctor_notes = []
-if missing > 0:
-    doctor_notes.append(f"Found {missing} missing values. Rows with gaps were removed.")
-if len(df) < 60:
-    doctor_notes.append(f"Only {len(df)} rows. Results will be shaky. Try to collect 100 or more.")
-
-target = st.sidebar.selectbox("Column to predict", df.columns, index=len(df.columns) - 1)
-classes = list(df[target].unique())
-if len(classes) != 2:
-    st.error("This version needs a target with exactly 2 classes (e.g. Safe / At Risk).")
+target = st.sidebar.selectbox("Column to predict", list(raw.columns), index=len(raw.columns) - 1)
+if raw[target].nunique(dropna=True) < 2:
+    st.error("The chosen column has fewer than 2 different values, so there is nothing to predict.")
     st.stop()
-default_pos = classes.index("At Risk") if "At Risk" in classes else 0
-pos = st.sidebar.selectbox("Which class is the risky one?", classes, index=default_pos)
+if raw[target].nunique(dropna=True) > 20:
+    st.error("This column has more than 20 different values, so it looks like a number to estimate "
+             "(regression) rather than a category. Pick a column with a small set of labels.")
+    st.stop()
 
-if df[target].value_counts().min() < 10:
-    doctor_notes.append("One class has fewer than 10 students, so cross-validation may fail or mislead.")
+X, y, classes, num_cols, cat_cols, notes = clean_cached(raw, target)
+if len(X.columns) == 0:
+    st.error("No usable feature columns were left after cleaning.")
+    st.stop()
 
-X = df.drop(columns=[target]).select_dtypes(include="number")
-y = (df[target] == pos).astype(int)
+counts = y.value_counts()
+default_pos = classes.index(counts.idxmin())
+pos = st.sidebar.selectbox("Class to focus on", classes, index=default_pos,
+                           help="The outcome you care about most (for example 'At Risk' or 'churn'). "
+                                "Probabilities, what-if and flagged lists use this class.")
+multi = len(classes) > 2
+if counts.min() < 10:
+    notes.append(f"One class has only {counts.min()} rows, so results may be unreliable.")
+if len(X) < 60:
+    notes.append(f"Only {len(X)} rows. Results will be shaky.")
 
 # =====================================================================
-# SIDEBAR: VIEW + MODEL SETTINGS
+# 2. SIDEBAR: MODE + MODEL SETTINGS
 # =====================================================================
 st.sidebar.divider()
-view = st.sidebar.radio("Who is using this?", ["👩‍🏫 Teacher", "🎓 Student"])
-
+mode = st.sidebar.radio("Mode", ["📊 Analyst (compare models)", "🔮 Predictor (predict and explain)"])
 st.sidebar.header("Model settings")
 k = st.sidebar.slider("kNN: k", 1, 25, 5)
 depth = st.sidebar.slider("Tree: max depth", 1, 15, 3)
@@ -73,157 +96,164 @@ h2 = st.sidebar.slider("Neural Net: neurons in layer 2", 4, 64, 8)
 
 
 # =====================================================================
-# TRAINING (cached, so moving a tab does not retrain everything)
+# 3. TRAIN (cached)
 # =====================================================================
 @st.cache_resource(show_spinner="Training all models...")
-def train_all(_X, _y, data_key, k, depth, kernel, C, gamma, act, h1, h2):
-    X_train, X_test, y_train, y_test = train_test_split(
-        _X, _y, test_size=0.2, random_state=42, stratify=_y)           # Exp 1
-    models = {
-        "kNN": make_pipeline(StandardScaler(), KNeighborsClassifier(n_neighbors=k)),
-        "Decision Tree": DecisionTreeClassifier(max_depth=depth, random_state=42,
-                                                class_weight="balanced"),
-        "Naive Bayes": GaussianNB(),
-        "Logistic Regression": make_pipeline(StandardScaler(), LogisticRegression(
-            max_iter=1000, class_weight="balanced")),
-        "SVM": make_pipeline(StandardScaler(), SVC(
-            kernel=kernel, C=C, gamma=gamma, probability=True, random_state=42,
-            class_weight="balanced")),
-        "Neural Network": make_pipeline(StandardScaler(), MLPClassifier(
-            hidden_layer_sizes=(h1, h2), activation=act, max_iter=1000, random_state=42)),
-    }
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)    # k-fold (Exp 1)
-    rows, probas, gaps = [], {}, {}
-    for name, model in models.items():
-        model.fit(X_train, y_train)
-        pred = model.predict(X_test)
-        prob = model.predict_proba(X_test)[:, 1]
-        probas[name] = prob
-        tr = accuracy_score(y_train, model.predict(X_train))
-        te = accuracy_score(y_test, pred)
-        gaps[name] = tr - te
-        rows.append({
-            "Model": name,
-            "Accuracy": te,
-            "Precision": precision_score(y_test, pred, zero_division=0),
-            "Recall": recall_score(y_test, pred, zero_division=0),
-            "F1": f1_score(y_test, pred, zero_division=0),
-            "AUC": roc_auc_score(y_test, prob),
-            "CV F1 (5-fold)": cross_val_score(model, _X, _y, cv=skf, scoring="f1").mean(),
-        })
-    score = pd.DataFrame(rows).set_index("Model")
-    return dict(models=models, score=score, probas=probas, gaps=gaps,
-                X_test=X_test, y_test=y_test, winner=score["CV F1 (5-fold)"].idxmax())
+def get_results(_X, _y, key, classes_t, pos, num_t, cat_t, k, depth, kernel, C, gamma, act, h1, h2):
+    p = dict(k=k, depth=depth, kernel=kernel, C=C, gamma=gamma, act=act, h1=h1, h2=h2)
+    return train_all(_X, _y, list(classes_t), pos, list(num_t), list(cat_t), p)
 
 
 @st.cache_data(show_spinner=False)
-def cluster_curves(_X, data_key):
-    Xs = StandardScaler().fit_transform(_X)
-    ks = list(range(2, 9))
+def cluster_curves(_X, key, num_t, cat_t):
+    Z = make_pre(list(num_t), list(cat_t), True).fit_transform(_X)
+    ks = list(range(2, min(9, len(_X) - 1)))
     inertias, sils = [], []
     for kk in ks:
-        km = KMeans(n_clusters=kk, n_init=10, random_state=42).fit(Xs)
+        km = KMeans(n_clusters=kk, n_init=10, random_state=42).fit(Z)
         inertias.append(km.inertia_)
-        sils.append(silhouette_score(Xs, km.labels_))
+        sils.append(silhouette_score(Z, km.labels_))
     return ks, inertias, sils
 
 
-data_key = str(pd.util.hash_pandas_object(df, index=True).sum()) + target + str(pos)
-R = train_all(X, y, data_key, k, depth, kernel, C, gamma, act, h1, h2)
-models, score, winner = R["models"], R["score"], R["winner"]
+key = str(pd.util.hash_pandas_object(X, index=True).sum()) + target + str(pos) + str(len(classes))
+try:
+    R = get_results(X, y, key, tuple(classes), pos, tuple(num_cols), tuple(cat_cols),
+                    k, depth, kernel, C, gamma, act, h1, h2)
+except ValueError as e:
+    st.error(f"Could not train the models: {e}")
+    st.stop()
+
+models, score, winner, yy = R["models"], R["score"], R["winner"], R["yy"]
 model = models[winner]
-risk_all = model.predict_proba(X)[:, 1]
+fc = focus_column(classes, pos)
+F1_NAME = "macro F1" if multi else "F1"
+
+typical = {c: (X[c].median() if c in num_cols else X[c].mode().iloc[0]) for c in X.columns}
+pred_idx_all = model.predict(X)
+prob_all = model.predict_proba(X)[:, fc]
 
 
 # =====================================================================
-# HELPER FUNCTIONS
+# 4. HELPERS
 # =====================================================================
-def risk_of(row):
-    return float(model.predict_proba(pd.DataFrame([row])[X.columns])[0][1])
+def rows_df(rows):
+    return pd.DataFrame(rows)[list(X.columns)]
+
+
+def prob_of(row):
+    return float(model.predict_proba(rows_df([row]))[0][fc])
 
 
 def reasons_for(row, top=3):
-    base = risk_of(row)
+    base = prob_of(row)
     out = []
-    for f in X.columns:
-        r = row.copy()
-        r[f] = X[f].mean()
-        out.append((f, float(row[f]), float(X[f].mean()), base - risk_of(r)))
+    for c in X.columns:
+        r = dict(row)
+        r[c] = typical[c]
+        out.append((c, row[c], typical[c], base - prob_of(r)))
     out.sort(key=lambda t: abs(t[3]), reverse=True)
     return base, out[:top]
 
 
-def find_fix(row, actionable):
-    """Greedy search for the smallest changes that bring risk below 50%."""
-    start = row.astype(float)
-    cur = start.copy()
-    step = (X.max() - X.min()) * 0.03
-    p = risk_of(cur)
+def desired_idx(label):
+    return (1 if label == pos else 0) if not multi else classes.index(label)
+
+
+def find_change(row, actionable, want):
+    """Greedy search for the smallest changes that make the model predict `want`."""
+    di = desired_idx(want)
+    cur = dict(row)
+    span = {c: (X[c].max() - X[c].min()) * 0.03 for c in num_cols}
+    p = float(model.predict_proba(rows_df([cur]))[0][di])
     start_p = p
     for _ in range(150):
-        if p < 0.5:
+        if int(model.predict(rows_df([cur]))[0]) == di:
             break
         cands = []
-        for f in actionable:
-            for d in (1, -1):
-                c = cur.copy()
-                c[f] = np.clip(c[f] + d * step[f], X[f].min(), X[f].max())
-                if c[f] != cur[f]:
-                    cands.append(c)
+        for c in actionable:
+            if c in num_cols:
+                for d in (1, -1):
+                    new = dict(cur)
+                    new[c] = float(np.clip(cur[c] + d * span[c], X[c].min(), X[c].max()))
+                    if new[c] != cur[c]:
+                        cands.append(new)
+            else:
+                for v in sorted(X[c].dropna().unique().tolist()):
+                    if v != cur[c]:
+                        new = dict(cur)
+                        new[c] = v
+                        cands.append(new)
         if not cands:
             break
-        probs = model.predict_proba(pd.DataFrame(cands)[X.columns])[:, 1]
-        j = int(probs.argmin())
-        if probs[j] >= p - 1e-9:
+        probs = model.predict_proba(rows_df(cands))[:, di]
+        j = int(probs.argmax())
+        if probs[j] <= p + 1e-9:
             break
         cur, p = cands[j], float(probs[j])
-    return start, cur, start_p, p
+    ok = int(model.predict(rows_df([cur]))[0]) == di
+    return cur, start_p, p, ok
 
 
-def show_risk(p, label):
-    if p >= 0.5:
-        st.error(f"⚠️ {label}: risk {p*100:.0f}%")
-    else:
-        st.success(f"✅ Not {label}: risk {p*100:.0f}%")
+def input_widgets(prefix, start=None, shown=None, slider=False):
+    """One widget per feature. Features not in `shown` keep their start value."""
+    vals = {}
+    cols = st.columns(3)
+    i = 0
+    for c in X.columns:
+        base = typical[c] if start is None else start[c]
+        if shown is not None and c not in shown:
+            vals[c] = base
+            continue
+        box = cols[i % 3]
+        i += 1
+        if c in num_cols:
+            lo, hi = float(X[c].min()), float(X[c].max())
+            base = float(min(max(base, lo), hi))
+            if slider:
+                vals[c] = box.slider(c, lo, hi, base, key=f"{prefix}_{c}")
+            else:
+                vals[c] = box.number_input(c, min_value=lo, max_value=hi, value=base,
+                                           step=(hi - lo) / 100 if hi > lo else 1.0,
+                                           key=f"{prefix}_{c}")
+        else:
+            opts = sorted(X[c].dropna().unique().tolist())
+            vals[c] = box.selectbox(c, opts, index=opts.index(base) if base in opts else 0,
+                                    key=f"{prefix}_{c}")
+    return vals
 
 
 # =====================================================================
-# TEACHER VIEW
+# 5. ANALYST MODE
 # =====================================================================
-if view.startswith("👩"):
+if mode.startswith("📊"):
     t1, t2, t3, t4, t5 = st.tabs(["📊 Overview", "🏁 Model Arena", "👥 Groups",
                                   "⚖️ Fairness & Ethics", "📘 Learn"])
 
-    # ---------- Overview ----------
     with t1:
-        for note in doctor_notes:
-            st.warning("Data Doctor: " + note)
+        for n in notes:
+            st.warning("Data Doctor: " + n)
         a, b, c = st.columns(3)
-        a.metric("Students", len(df))
-        b.metric("Columns", df.shape[1])
-        c.metric("At-risk share", f"{y.mean()*100:.0f}%")
-
+        a.metric("Rows used", len(X))
+        b.metric("Feature columns", len(X.columns))
+        c.metric("Classes", len(classes))
         st.subheader("Data preview")
-        st.dataframe(df.head(10), use_container_width=True)
+        st.dataframe(raw.head(10))
         st.subheader("Class balance")
-        st.bar_chart(df[target].value_counts())
+        st.bar_chart(y.astype(str).value_counts())
+        st.subheader(f"Rows the model predicts as '{pos}'")
+        flagged = X.assign(**{f"probability of {pos}": (prob_all * 100).round(0)})
+        flagged = flagged[pred_idx_all == fc].sort_values(f"probability of {pos}", ascending=False)
+        st.write(f"{len(flagged)} of {len(X)} rows are predicted as **{pos}** by **{winner}**.")
+        st.dataframe(flagged.head(200))
 
-        st.subheader("🚩 Students the model flags as at risk")
-        flagged = X.assign(risk_percent=(risk_all * 100).round(0))
-        flagged = flagged[risk_all >= 0.5].sort_values("risk_percent", ascending=False)
-        st.write(f"{len(flagged)} of {len(df)} students flagged by **{winner}**. "
-                 "A flag means *check in and offer help*, not *punish*.")
-        st.dataframe(flagged, use_container_width=True)
-
-    # ---------- Model Arena ----------
     with t2:
         st.subheader("🏆 Scoreboard")
-        st.dataframe(score.style.format("{:.3f}").highlight_max(axis=0, color="#14532d"),
-                     use_container_width=True)
-        st.success(f"Winner: **{winner}** (best 5-fold cross-validated F1 = "
-                   f"{score.loc[winner, 'CV F1 (5-fold)']:.3f})")
-        st.caption("F1 is used instead of plain accuracy because At Risk students are fewer than Safe ones. "
-                   "The test set is small, so trust the CV F1 column most.")
+        st.dataframe(score.style.format("{:.3f}").highlight_max(axis=0, color="#14532d"))
+        st.success(f"Winner: **{winner}** (best {R['folds']}-fold cross-validated {F1_NAME} = "
+                   f"{score.loc[winner, 'CV F1']:.3f})")
+        st.caption(f"{F1_NAME} is used instead of plain accuracy because classes can be unbalanced. "
+                   "The test split is small, so trust the CV column most.")
 
         st.subheader("🚨 Overfitting alarm (train vs test accuracy)")
         for name, g in R["gaps"].items():
@@ -234,11 +264,14 @@ if view.startswith("👩"):
 
         left, right = st.columns(2)
         with left:
-            st.subheader("ROC curves")
+            st.subheader(f"ROC curves for '{pos}'")
             fig, ax = plt.subplots(figsize=(6, 5))
+            yt = (R["y_test"] == fc).astype(int)
             for name, prob in R["probas"].items():
-                fpr, tpr, _ = roc_curve(R["y_test"], prob)
-                ax.plot(fpr, tpr, label=f"{name} (AUC {roc_auc_score(R['y_test'], prob):.2f})")
+                if yt.nunique() < 2:
+                    break
+                fpr, tpr, _ = roc_curve(yt, prob[:, fc])
+                ax.plot(fpr, tpr, label=f"{name} (AUC {roc_auc_score(yt, prob[:, fc]):.2f})")
             ax.plot([0, 1], [0, 1], "k--", label="Random guess")
             ax.set_xlabel("False positive rate")
             ax.set_ylabel("True positive rate")
@@ -246,183 +279,162 @@ if view.startswith("👩"):
             st.pyplot(fig)
         with right:
             st.subheader("What matters most")
-            pi = permutation_importance(model, R["X_test"], R["y_test"], scoring="f1",
-                                        n_repeats=20, random_state=42)
-            imp = pd.Series(pi.importances_mean, index=X.columns).sort_values()
+            pi = permutation_importance(model, R["X_test"], R["y_test"], scoring=R["scoring"],
+                                        n_repeats=10, random_state=42)
+            imp = pd.Series(pi.importances_mean, index=X.columns).sort_values().tail(12)
             fig, ax = plt.subplots(figsize=(6, 5))
             ax.barh(imp.index, imp.values)
-            ax.set_xlabel(f"Drop in F1 when shuffled ({winner})")
+            ax.set_xlabel(f"Drop in {F1_NAME} when shuffled ({winner})")
             st.pyplot(fig)
 
-        with st.expander("See the decision tree (the rules behind the risk)"):
+        with st.expander("See the decision tree (the rules behind the prediction)"):
             if depth <= 4:
+                tree = models["Decision Tree"]
+                names = [n.split("__", 1)[-1] for n in tree[:-1].get_feature_names_out()]
+                cn = [str(c) for c in classes] if multi else ["Not " + str(pos), str(pos)]
                 fig, ax = plt.subplots(figsize=(14, 6))
-                plot_tree(models["Decision Tree"], feature_names=list(X.columns),
-                          class_names=["Not " + str(pos), str(pos)], filled=True,
-                          fontsize=8, ax=ax)
+                plot_tree(tree[-1], feature_names=names, class_names=cn,
+                          filled=True, fontsize=8, ax=ax)
                 st.pyplot(fig)
             else:
                 st.caption("Set tree depth to 4 or less in the sidebar to see the picture.")
 
-    # ---------- Groups ----------
     with t3:
-        st.subheader("Student groups (K-Means)")
-        ks, inertias, sils = cluster_curves(X, data_key)
-        fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 3.5))
-        a1.plot(ks, inertias, "o-"); a1.set_title("Elbow method"); a1.set_xlabel("k")
-        a2.plot(ks, sils, "o-"); a2.set_title("Silhouette score"); a2.set_xlabel("k")
-        st.pyplot(fig)
-        n_clusters = st.slider("Number of groups", 2, 8, 3)
-        Xs = StandardScaler().fit_transform(X)
-        km = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit(Xs)
-        g = X.copy()
-        g["group"] = km.labels_
-        g["at_risk"] = y.values
-        summary = g.groupby("group").mean().round(2)
-        summary["students"] = g.groupby("group").size()
-        st.write("Average values per group. The group with the highest `at_risk` is the struggling group.")
-        st.dataframe(summary, use_container_width=True)
+        st.subheader("Groups found without labels (K-Means)")
+        if len(X) < 10:
+            st.info("Not enough rows for clustering.")
+        else:
+            ks, inertias, sils = cluster_curves(X, key, tuple(num_cols), tuple(cat_cols))
+            fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 3.5))
+            a1.plot(ks, inertias, "o-"); a1.set_title("Elbow method"); a1.set_xlabel("k")
+            a2.plot(ks, sils, "o-"); a2.set_title("Silhouette score"); a2.set_xlabel("k")
+            st.pyplot(fig)
+            n_clusters = st.slider("Number of groups", 2, 8, 3)
+            Z = make_pre(num_cols, cat_cols, True).fit_transform(X)
+            labels = KMeans(n_clusters=n_clusters, n_init=10, random_state=42).fit_predict(Z)
+            summ = pd.DataFrame({"rows": pd.Series(labels).value_counts().sort_index()})
+            summ[f"share that is '{pos}' (%)"] = ((yy == fc).groupby(labels).mean() * 100).round(0)
+            if num_cols:
+                summ = summ.join(X[num_cols].groupby(labels).mean().round(2))
+            st.write("Average values per group. Compare the share column to see which group "
+                     f"is most linked to '{pos}'.")
+            st.dataframe(summ)
 
-    # ---------- Fairness & Ethics ----------
     with t4:
         st.subheader("Bias checker")
-        st.write("Does the model work equally well for different groups of students?")
-        split_col = st.selectbox("Split students by", list(X.columns), key="bias_col")
-        cut = st.slider("Group boundary", float(X[split_col].min()), float(X[split_col].max()),
-                        float(X[split_col].median()), key="bias_cut")
-        pred_all = model.predict(X)
+        st.write("Does the model work equally well for different groups in the data?")
+        col = st.selectbox("Split rows by", list(X.columns), key="bias_col")
+        if col in num_cols:
+            cut = st.slider("Group boundary", float(X[col].min()), float(X[col].max()),
+                            float(X[col].median()), key="bias_cut")
+            groups = {f"{col} below {cut:.2f}": X[col] < cut, f"{col} at or above {cut:.2f}": X[col] >= cut}
+        else:
+            top = X[col].value_counts().index[:8]
+            groups = {f"{col} = {v}": X[col] == v for v in top}
         rows = []
-        for label, mask in [(f"{split_col} below {cut:.1f}", X[split_col] < cut),
-                            (f"{split_col} at or above {cut:.1f}", X[split_col] >= cut)]:
+        for label, mask in groups.items():
             if mask.sum() == 0:
                 continue
-            yt, yp = y[mask], pred_all[mask.values]
-            rows.append({"Group": label, "Students": int(mask.sum()),
-                         "Actually at risk": int(yt.sum()),
-                         "Accuracy": accuracy_score(yt, yp),
-                         "Recall": recall_score(yt, yp, zero_division=0),
-                         "Flagged as at risk": f"{yp.mean()*100:.0f}%"})
-        bias_df = pd.DataFrame(rows).set_index("Group")
-        st.dataframe(bias_df.style.format({"Accuracy": "{:.2f}", "Recall": "{:.2f}"}),
-                     use_container_width=True)
-        if len(bias_df) == 2:
-            diff = abs(bias_df["Recall"].iloc[0] - bias_df["Recall"].iloc[1])
-            if diff > 0.15:
-                st.error(f"⚠️ Recall differs by {diff*100:.0f} points between the groups, "
-                         "so the model may be unfair to one group.")
-            else:
-                st.success("✅ Recall is similar across both groups.")
-        st.caption("If a group has very few at-risk students, the numbers are unreliable.")
+            act_f = (yy[mask] == fc)
+            pr_f = (pred_idx_all[mask.values] == fc)
+            rows.append({"Group": label, "Rows": int(mask.sum()),
+                         f"Actually '{pos}' (%)": round(act_f.mean() * 100),
+                         f"Predicted '{pos}' (%)": round(pr_f.mean() * 100),
+                         "Accuracy": float((pred_idx_all[mask.values] == yy[mask].values).mean()),
+                         f"Recall for '{pos}'": float((pr_f & act_f).sum() / act_f.sum()) if act_f.sum() else np.nan})
+        bias = pd.DataFrame(rows).set_index("Group")
+        st.dataframe(bias.style.format({"Accuracy": "{:.2f}", f"Recall for '{pos}'": "{:.2f}"}))
+        acc_gap = bias["Accuracy"].max() - bias["Accuracy"].min() if len(bias) > 1 else 0
+        if acc_gap > 0.15:
+            st.error(f"⚠️ Accuracy differs by {acc_gap*100:.0f} points between groups, "
+                     "so the model may treat some groups unfairly.")
+        else:
+            st.success("✅ Accuracy is similar across the groups shown.")
+        st.caption("This check includes rows the model trained on, and small groups give unreliable numbers.")
 
         st.subheader("Ethics and limitations")
         st.markdown("""
-- **This tool supports people, it does not judge them.** A flag means "check in and offer help", never "punish".
-- **Predictions come from patterns, not certainty.** Some flagged students will be fine, and some missed students will struggle.
-- **Small data is shaky.** With only a few hundred rows, results can change a lot between runs.
-- **Privacy:** data is anonymous, contains no names or roll numbers, and is used only for this project.
-- **Fairness:** always check the Bias checker before trusting the results for any group.
-- **Advice is not a guarantee.** The "How to fix it" suggestions show what the model learned, not what will certainly happen.
+- **A prediction is a pattern, not a fact.** Some predictions will be wrong, so use them to support decisions, not make them.
+- **Data quality limits everything.** Small, biased or outdated data gives unreliable models.
+- **Check fairness before trusting results** for any group of people.
+- **Privacy:** only upload data you are allowed to use, and remove names and IDs.
+- **What-if and "how to change" advice** shows what the model learned. It does not prove cause and effect.
 """)
 
-    # ---------- Learn ----------
     with t5:
-        st.subheader("The algorithms in this project")
+        st.subheader("The algorithms in this app")
         st.markdown("""
 | Model | Lab experiment | In one line |
 |---|---|---|
-| Train/test split, k-fold CV | Exp 1 | Test on students the model has never seen, and repeat 5 times for fairness |
-| kNN | Exp 4 | Look at the k most similar students and take a vote |
+| Train/test split, k-fold CV | Exp 1 | Test on rows the model has never seen, and repeat several times for fairness |
+| kNN | Exp 4 | Look at the k most similar rows and take a vote |
 | Decision Tree | Exp 3 | Asks yes/no questions; too deep means it memorizes (overfitting) |
 | Naive Bayes | Exp 7 | Uses probabilities, assuming features are independent |
-| Logistic Regression | Exp 8 | Draws a straight boundary and gives a risk probability (sigmoid) |
+| Logistic Regression | Exp 8 | Draws a straight boundary and gives a probability (sigmoid) |
 | SVM | Exp 9 | Finds the widest-margin boundary; C and gamma control how tight it is |
 | Neural Network | Exp 10 | Layers of neurons that learn curved patterns |
-| K-Means | Exp 14 | Groups similar students without being told the answer |
-| ROC and AUC | Exp 8 | How well a model separates at-risk from safe at every threshold |
+| K-Means | Exp 14 | Groups similar rows without being told the answer |
+| ROC and AUC | Exp 8 | How well a model separates one class from the rest at every threshold |
 """)
 
 # =====================================================================
-# STUDENT VIEW
+# 6. PREDICTOR MODE
 # =====================================================================
 else:
-    st.subheader("Enter your details")
-    st.caption("Nothing is saved. Values start at the class average.")
-    me = {}
-    cols = st.columns(3)
-    for i, col in enumerate(X.columns):
-        me[col] = cols[i % 3].number_input(
-            col, min_value=float(X[col].min()), max_value=float(X[col].max()),
-            value=float(round(X[col].mean(), 1)), step=1.0, key=f"me_{col}")
-    me = pd.Series(me)[X.columns]
+    st.subheader("Enter values for one case")
+    with st.expander("Feature values (start at typical values)", expanded=True):
+        me = input_widgets("me")
+    p1, p2, p3 = st.tabs(["🎯 Prediction", "🎚️ What-if", "🛠️ How to change the outcome"])
 
-    s1, s2, s3 = st.tabs(["🎯 My risk", "🎚️ What-if", "🛠️ How to fix it"])
-
-    # ---------- My risk ----------
-    with s1:
+    with p1:
         base, top = reasons_for(me)
-        st.metric("Your risk", f"{base*100:.0f}%")
-        show_risk(base, str(pos))
-        st.write(f"Prediction by **{winner}**. This is a pattern-based estimate, not a verdict.")
+        label = classes[int(model.predict(rows_df([me]))[0])] if multi else (pos if base >= 0.5 else "not " + str(pos))
+        st.metric(f"Probability of '{pos}'", f"{base*100:.0f}%")
+        st.write(f"**{winner}** predicts: **{label}**. This is a pattern-based estimate, not a certainty.")
         st.subheader("Why?")
         shown = False
-        for f, val, avg, effect in top:
-            if effect > 0.01:
-                st.write(f"🔺 **{f}** = {val:.1f} (class average {avg:.1f}) pushes your risk **up** by about {effect*100:.0f} points")
-                shown = True
-            elif effect < -0.01:
-                st.write(f"🔻 **{f}** = {val:.1f} (class average {avg:.1f}) pushes your risk **down** by about {-effect*100:.0f} points")
+        for c, val, avg, eff in top:
+            if abs(eff) > 0.01:
+                direction = "up" if eff > 0 else "down"
+                arrow = "🔺" if eff > 0 else "🔻"
+                st.write(f"{arrow} **{c}** = {val} (typical: {avg}) pushes the probability of '{pos}' "
+                         f"**{direction}** by about {abs(eff)*100:.0f} points")
                 shown = True
         if not shown:
-            st.write("No single factor stands out.")
+            st.write("No single feature stands out for this case.")
 
-    # ---------- What-if ----------
-    with s2:
-        st.write("Move the sliders to see how your risk would change.")
-        new = {}
-        sc = st.columns(3)
-        for i, col in enumerate(X.columns):
-            lo, hi = float(X[col].min()), float(X[col].max())
-            new[col] = sc[i % 3].slider(col, lo, hi, float(me[col]), key=f"wi_{col}")
-        new = pd.Series(new)[X.columns]
-        before, after = risk_of(me), risk_of(new)
+    with p2:
+        st.write("Change some features and see how the probability moves.")
+        adjust = st.multiselect("Features to adjust", list(X.columns), default=list(X.columns)[:8])
+        new = input_widgets("wi", start=me, shown=adjust, slider=True)
+        before, after = prob_of(me), prob_of(new)
         m1, m2 = st.columns(2)
-        m1.metric("Original risk", f"{before*100:.0f}%")
-        m2.metric("New risk", f"{after*100:.0f}%", delta=f"{(after-before)*100:.0f}%",
-                  delta_color="inverse")
-        if after >= 0.5:
-            st.error("Still in the at-risk zone. Try raising attendance, study hours or marks.")
-        else:
-            st.success("Out of the at-risk zone with these changes!")
+        m1.metric(f"Original probability of '{pos}'", f"{before*100:.0f}%")
+        m2.metric("New probability", f"{after*100:.0f}%", delta=f"{(after-before)*100:.0f}%")
 
-    # ---------- How to fix it ----------
-    with s3:
-        st.write("The app searches for the smallest changes that bring your risk below 50%.")
-        default_actionable = [c for c in X.columns
-                              if c in ("attendance", "study_hours", "assignments_pct", "sleep_hours")]
-        actionable = st.multiselect("Things you can change", list(X.columns),
-                                    default=default_actionable or list(X.columns))
-        if risk_of(me) < 0.5:
-            st.success("You are not in the at-risk zone, so there is nothing to fix. Keep it up!")
-        elif not actionable:
-            st.info("Pick at least one thing you can change.")
+    with p3:
+        want = st.selectbox("Desired outcome", classes,
+                            index=0 if pos != classes[0] else min(1, len(classes) - 1))
+        cur_pred = classes[int(model.predict(rows_df([me]))[0])] if multi else (pos if prob_of(me) >= 0.5 else [c for c in classes if c != pos][0])
+        if str(cur_pred) == str(want):
+            st.success(f"The model already predicts '{want}' for these values.")
         else:
-            start, cur, p0, p1 = find_fix(me, actionable)
-            ch = pd.DataFrame({"Now": start[actionable].round(1),
-                               "Suggested": cur[actionable].round(1)})
-            ch["Change"] = (ch["Suggested"] - ch["Now"]).round(1)
-            ch = ch[ch["Change"] != 0]
-            a, b = st.columns(2)
-            a.metric("Risk now", f"{p0*100:.0f}%")
-            b.metric("Risk after changes", f"{p1*100:.0f}%", delta=f"{(p1-p0)*100:.0f}%",
-                     delta_color="inverse")
-            if p1 < 0.5:
-                st.success("These changes move you out of the at-risk zone:")
-                for f, row in ch.iterrows():
-                    word = "increase" if row["Change"] > 0 else "reduce"
-                    st.write(f"• {word} **{f}** from {row['Now']} to {row['Suggested']}")
+            actionable = st.multiselect("Features that can be changed", list(X.columns),
+                                        default=list(X.columns)[:8])
+            if not actionable:
+                st.info("Pick at least one feature that can be changed.")
             else:
-                st.warning("These factors alone are not enough. Try adding more to the list above, "
-                           "and talk to your mentor.")
+                new, p0, pe, ok = find_change(me, actionable, want)
+                ch = pd.DataFrame({"Now": {c: me[c] for c in actionable},
+                                   "Suggested": {c: new[c] for c in actionable}})
+                ch = ch[ch["Now"].astype(str) != ch["Suggested"].astype(str)]
+                a, b = st.columns(2)
+                a.metric(f"Probability of '{want}' now", f"{p0*100:.0f}%")
+                b.metric("After the changes", f"{pe*100:.0f}%", delta=f"{(pe-p0)*100:.0f}%")
+                if ok:
+                    st.success(f"These changes make the model predict '{want}':")
+                else:
+                    st.warning("These features alone are not enough. Try adding more features to the list.")
                 if len(ch):
                     st.dataframe(ch)
-            st.caption("Advice comes from patterns in the data, not a guaranteed outcome.")
+                st.caption("Suggestions come from patterns in the data, not a guaranteed outcome.")

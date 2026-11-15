@@ -1,60 +1,56 @@
-# EduGuard 🎓 — an ML Model Arena for finding at-risk students early
+# ML Model Arena 🏟️
 
-EduGuard lets several machine learning models compete on student data, picks the
-fairest winner, and then explains the result in plain language: who is at risk,
-why, and what could change it.
+Upload **any CSV**, choose the column to predict, and six machine learning models
+compete on it. The app picks the fairest winner, explains the result in plain
+language, and lets you test what-if changes.
 
 **Live app:** <paste your Streamlit link here>
 
-![EduGuard screenshot](screenshots/scoreboard.png)
+![Scoreboard](screenshots/scoreboard.png)
 
-## Data note (please read)
-The included `students.csv` is **synthetic data** created by `make_data.py`
-(300 students, 6 features). It is meant for demonstration, so the results are
-not findings about real students. The app accepts any CSV with a two-class
-target column, so real data can be uploaded from the sidebar.
+## Works on any classification dataset
+- Handles **numeric and text columns**, missing values, and ID-like columns (ignored automatically).
+- Works with **2 classes or more** (for example Safe/At Risk, spam/ham, or three flower species).
+- Built-in demos: a student at-risk dataset (synthetic), Iris (3 classes) and Breast cancer (30 features).
+- Limit: the column to predict must be a category with up to 20 labels (classification, not regression).
 
 ## What it does
 | Feature | Lab experiment |
 |---|---|
-| 80/20 train-test split and 5-fold cross-validation | Exp 1 |
-| Linear and kernel models compared on one scoreboard | Exp 1, 9 |
+| 80/20 train-test split and k-fold cross-validation | Exp 1 |
 | Decision tree with depth control, tree picture and overfitting alarm | Exp 3 |
 | k-Nearest Neighbours with adjustable k | Exp 4 |
 | Gaussian Naive Bayes | Exp 7 |
 | Logistic Regression, ROC curves and AUC | Exp 8 |
 | SVM with kernel, C and gamma controls | Exp 9 |
 | Neural network (MLP) with activation and layer controls | Exp 10 |
-| K-Means student groups with elbow and silhouette charts | Exp 14 |
+| K-Means groups with elbow and silhouette charts | Exp 14 |
 
-Extras: What-If simulator, "Why this prediction?" (permutation importance and
-per-student reasons), counterfactual advice ("how to fix it"), a bias checker,
-a Data Doctor for missing values, and separate Teacher and Student views.
+Two modes:
+- **Analyst:** scoreboard and winner, overfitting alarm, ROC curves, feature importance, decision tree, K-Means groups, bias checker.
+- **Predictor:** enter one case to get a prediction with reasons, a What-if simulator, and a "how to change the outcome" search (counterfactual advice).
 
-## Results on the sample data
-Fill this in from your own scoreboard:
+## Data note
+The student demo (`students.csv`) is **synthetic**, created by `make_data.py`. It only
+shows the app working, so its results are not findings about real students.
 
-| Model | Accuracy | Recall | F1 | AUC | CV F1 (5-fold) |
-|---|---|---|---|---|---|
-| ... | | | | | |
-
-**Winner:** <model name>. 
-**Why F1, not accuracy:** only about 20% of students are At Risk, so a model
-that says "Safe" for everyone would still score about 80% accuracy.
-`class_weight="balanced"` raised recall for Logistic Regression and SVM.
+## Why F1 and not accuracy
+When one class is rare, a model that always predicts the common class still scores a
+high accuracy. The app ranks models by cross-validated F1 (macro F1 for more than two
+classes) and uses `class_weight="balanced"` where the model supports it.
 
 ## Run it yourself
 ```
 pip install -r requirements.txt
-python make_data.py
 streamlit run app.py
 ```
+Files: `app.py` (interface), `engine.py` (data cleaning and models), `students.csv` (demo data).
 
 ## Limitations and ethics
-- Synthetic data, so conclusions do not transfer to real students.
-- A flag means "offer help", never "punish". Predictions are patterns, not certainty.
-- Counterfactual advice shows what the model learned, not a guaranteed outcome.
-- Always check the Bias checker before trusting results for any group.
+- Predictions are patterns, not certainty. Use them to support decisions, not make them.
+- What-if and "how to change" advice shows what the model learned, not cause and effect.
+- Check the bias checker before trusting results for any group of people.
+- Only upload data you are allowed to use, and remove names and IDs first.
 
 ## Tech
 Python, Streamlit, scikit-learn, pandas, matplotlib.
