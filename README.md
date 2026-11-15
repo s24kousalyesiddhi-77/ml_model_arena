@@ -4,7 +4,7 @@ Upload **any CSV**, choose the column to predict, and six machine learning model
 compete on it. The app picks the fairest winner, explains the result in plain
 language, and lets you test what-if changes.
 
-**Live app:** <paste your Streamlit link here>
+**Live app:** <https://mlmodelarena-qr8aokjkhvz6drtsmv25up.streamlit.app/>
 
 ![Scoreboard](screenshots/scoreboard.png)
 
@@ -55,4 +55,4 @@ Files: `app.py` (interface), `engine.py` (data cleaning and models), `students.c
 ## Tech
 Python, Streamlit, scikit-learn, pandas, matplotlib.
 
-Built by <your name>, TYCSE, MGM's College of Engineering, Nanded.
+Built by <KOUNSALYE SIDDHI ARUN>,Roll No:216 [T5], TYCSE-B, MGM's College of Engineering, Nanded. 
