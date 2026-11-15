@@ -6,7 +6,7 @@ language, and lets you test what-if changes.
 
 **Live app:** <**Live app:** https://mlmodelarena-qr8aokjkhvz6drtsmv25up.streamlit.app/>
 
-![Scoreboard](screenshots/scoreboard.png)
+!
 
 ## Works on any classification dataset
 - Handles **numeric and text columns**, missing values, and ID-like columns (ignored automatically).
