@@ -16,9 +16,8 @@ st.markdown("""<style>
 </style>""", unsafe_allow_html=True)
 st.title("ML Model Arena 🏟️")
 st.caption("Upload any CSV, pick the column to predict, and let six models compete. "
-           st.caption(" KOUNSALYE SIDDHI ARUN, Roll No:216 [T5] , TYCSE-B, MGM's College of Engineering, Nanded")
            "Then explore, explain and test what-if changes.")
-
+st.caption("KOUNSALYE SIDDHI ARUN, Roll No: 216, TYCSE-B, MGM's College of Engineering, Nanded")
 
 # =====================================================================
 # 1. DATA (any CSV, or a built-in demo)
