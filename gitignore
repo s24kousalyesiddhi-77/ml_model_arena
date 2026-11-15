@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+# private data: never upload
+real_students.csv
+responses.csv
