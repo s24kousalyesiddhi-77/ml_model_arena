@@ -55,4 +55,4 @@ Files: `app.py` (interface) and `engine.py` (data cleaning and models).
 ## Tech
 Python, Streamlit, scikit-learn, pandas, matplotlib.
 
-Built by <your name>, TYCSE, MGM's College of Engineering, Nanded.
+Built by < KOUNSALYE SIDDHI ARUN >,Roll No:216 , [T5] TYCSE-B, MGM's College of Engineering, Nanded.
