@@ -4,14 +4,14 @@ Upload **any CSV**, choose the column to predict, and six machine learning model
 compete on it. The app picks the fairest winner, explains the result in plain
 language, and lets you test what-if changes.
 
-**Live app:** <https://mlmodelarena-qr8aokjkhvz6drtsmv25up.streamlit.app/>
+**Live app:** <paste your Streamlit link here>
 
 ![Scoreboard](screenshots/scoreboard.png)
 
 ## Works on any classification dataset
 - Handles **numeric and text columns**, missing values, and ID-like columns (ignored automatically).
 - Works with **2 classes or more** (for example Safe/At Risk, spam/ham, or three flower species).
-- Built-in demos: a student at-risk dataset (synthetic), Iris (3 classes) and Breast cancer (30 features).
+- Built-in demos: Breast cancer (2 classes, 30 features) and Iris (3 classes), both from scikit-learn.
 - Limit: the column to predict must be a category with up to 20 labels (classification, not regression).
 
 ## What it does
@@ -31,8 +31,8 @@ Two modes:
 - **Predictor:** enter one case to get a prediction with reasons, a What-if simulator, and a "how to change the outcome" search (counterfactual advice).
 
 ## Data note
-The student demo (`students.csv`) is **synthetic**, created by `make_data.py`. It only
-shows the app working, so its results are not findings about real students.
+The demo datasets come with scikit-learn and are real, public datasets. The breast cancer
+demo is for learning only and must not be used for medical decisions.
 
 ## Why F1 and not accuracy
 When one class is rare, a model that always predicts the common class still scores a
@@ -44,10 +44,10 @@ classes) and uses `class_weight="balanced"` where the model supports it.
 pip install -r requirements.txt
 streamlit run app.py
 ```
-Files: `app.py` (interface), `engine.py` (data cleaning and models), `students.csv` (demo data).
+Files: `app.py` (interface) and `engine.py` (data cleaning and models).
 
 ## Limitations and ethics
-- Predictions are patterns, not certainty. Use them to support decisions, not make them.
+- Predictions are patterns, not certainty, and the demo is not medical advice. Use them to support decisions, not make them.
 - What-if and "how to change" advice shows what the model learned, not cause and effect.
 - Check the bias checker before trusting results for any group of people.
 - Only upload data you are allowed to use, and remove names and IDs first.
@@ -55,4 +55,4 @@ Files: `app.py` (interface), `engine.py` (data cleaning and models), `students.c
 ## Tech
 Python, Streamlit, scikit-learn, pandas, matplotlib.
 
-Built by <KOUNSALYE SIDDHI ARUN>,Roll No:216 [T5], TYCSE-B, MGM's College of Engineering, Nanded. 
+Built by <your name>, TYCSE, MGM's College of Engineering, Nanded.

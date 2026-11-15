@@ -8,7 +8,12 @@ from sklearn.inspection import permutation_importance
 from sklearn.metrics import roc_curve, roc_auc_score, silhouette_score
 from engine import clean, train_all, make_pre, focus_column
 
-st.set_page_config(page_title="ML Model Arena", page_icon="🏟️", layout="wide")
+st.set_page_config(page_title="ML Model Arena", page_icon="🏟️", layout="wide",
+                   initial_sidebar_state="expanded")
+st.markdown("""<style>
+[data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] {display: none;}
+</style>""", unsafe_allow_html=True)
 st.title("ML Model Arena 🏟️")
 st.caption("Upload any CSV, pick the column to predict, and let six models compete. "
            st.caption(" KOUNSALYE SIDDHI ARUN, Roll No:216 [T5] , TYCSE-B, MGM's College of Engineering, Nanded")
@@ -20,8 +25,6 @@ st.caption("Upload any CSV, pick the column to predict, and let six models compe
 # =====================================================================
 @st.cache_data(show_spinner=False)
 def load_demo(name):
-    if name.startswith("Students"):
-        return pd.read_csv("students.csv")
     from sklearn import datasets
     if name.startswith("Iris"):
         d = datasets.load_iris(as_frame=True)
@@ -41,8 +44,7 @@ def clean_cached(df, target):
 
 file = st.sidebar.file_uploader("Upload your own CSV", type="csv")
 demo = st.sidebar.selectbox("...or try a demo dataset",
-                            ["Students (at-risk demo)", "Iris flowers (3 classes)",
-                             "Breast cancer (30 features)"])
+                            ["Breast cancer (30 features)", "Iris flowers (3 classes)"])
 if file is not None:
     try:
         raw = pd.read_csv(file)
