@@ -4,7 +4,7 @@ Upload **any CSV**, choose the column to predict, and six machine learning model
 compete on it. The app picks the fairest winner, explains the result in plain
 language, and lets you test what-if changes.
 
-**Live app:** <paste your Streamlit link here>
+**Live app:** <**Live app:** https://mlmodelarena-qr8aokjkhvz6drtsmv25up.streamlit.app/>
 
 ![Scoreboard](screenshots/scoreboard.png)
 
