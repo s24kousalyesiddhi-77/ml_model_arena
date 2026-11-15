@@ -11,6 +11,7 @@ from engine import clean, train_all, make_pre, focus_column
 st.set_page_config(page_title="ML Model Arena", page_icon="🏟️", layout="wide")
 st.title("ML Model Arena 🏟️")
 st.caption("Upload any CSV, pick the column to predict, and let six models compete. "
+           st.caption(" KOUNSALYE SIDDHI ARUN, Roll No:216 [T5] , TYCSE-B, MGM's College of Engineering, Nanded")
            "Then explore, explain and test what-if changes.")
 
 
