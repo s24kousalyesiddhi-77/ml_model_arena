@@ -17,14 +17,41 @@ st.markdown("""<style>
 st.title("ML Model Arena 🏟️")
 st.caption("Upload any CSV, pick the column to predict, and let six models compete. "
            "Then explore, explain and test what-if changes.")
-st.caption("KOUNSALYE SIDDHI ARUN, Roll No: 216, TYCSE-B, MGM's College of Engineering, Nanded")
+
 
 # =====================================================================
 # 1. DATA (any CSV, or a built-in demo)
 # =====================================================================
+def make_space_data():
+    """Simulated astronaut bone-loss data. Built from the seminar figures: about 1-1.5% bone
+    loss per month in space, reduced by exercise (about 2 hours per day is the usual plan).
+    No public astronaut dataset exists, so this is a teaching simulation, not real crew data."""
+    rng = np.random.default_rng(7)
+    n = 400
+    months = rng.integers(1, 31, n)
+    exercise = rng.normal(1.6, 0.6, n).clip(0.2, 3.0)
+    resistive = rng.choice(["Yes", "No"], n, p=[0.65, 0.35])
+    age = rng.integers(30, 56, n)
+    sex = rng.choice(["Female", "Male"], n)
+    calcium = rng.normal(1000, 200, n).clip(500, 1600)
+    vit_d = rng.normal(800, 250, n).clip(200, 1500)
+    sleep = rng.normal(6.2, 0.9, n).clip(4, 9)
+    rate = (1.4 - 0.35 * exercise - 0.25 * (resistive == "Yes") - 0.0003 * (calcium - 1000)
+            - 0.0002 * (vit_d - 800) + 0.004 * (age - 40) + rng.normal(0, 0.12, n)).clip(0.1, 1.6)
+    loss = rate * months
+    risk = np.where(loss < 5, "Low", np.where(loss < 12, "Moderate", "High"))
+    return pd.DataFrame({
+        "mission_months": months, "exercise_hours_per_day": exercise.round(2),
+        "resistive_exercise": resistive, "age": age, "sex": sex,
+        "calcium_mg": calcium.round(0), "vitamin_d_iu": vit_d.round(0),
+        "sleep_hours": sleep.round(1), "bone_loss_risk": risk})
+
+
 @st.cache_data(show_spinner=False)
 def load_demo(name):
     from sklearn import datasets
+    if name.startswith("Space"):
+        return make_space_data()
     if name.startswith("Iris"):
         d = datasets.load_iris(as_frame=True)
         df = d.frame.drop(columns="target")
@@ -43,7 +70,8 @@ def clean_cached(df, target):
 
 file = st.sidebar.file_uploader("Upload your own CSV", type="csv")
 demo = st.sidebar.selectbox("...or try a demo dataset",
-                            ["Breast cancer (30 features)", "Iris flowers (3 classes)"])
+                            ["Breast cancer (30 features)", "Iris flowers (3 classes)",
+                             "Space health: bone-loss risk (simulated)"])
 if file is not None:
     try:
         raw = pd.read_csv(file)
